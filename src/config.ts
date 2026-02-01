@@ -2,16 +2,15 @@ import {homedir} from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-// Gets the config value `clangd.<key>`. Applies ${variable} substitutions.
-export async function get<T>(key: string): Promise<T> {
-  return await substitute(
-      vscode.workspace.getConfiguration('clangd').get<T>(key)!);
-}
+// Gets the config value. Applies ${variable} substitutions.
+export async function get<T>(key: string): Promise<T | undefined> {
+  const parts = key.split('.');
+  const section = parts.length > 1 ? parts[0] : 'cpp';
+  const name = parts.length > 1 ? parts[1] : parts[0];
 
-// Sets the config value `clangd.<key>`. Does not apply substitutions.
-export function update<T>(key: string, value: T,
-                          target?: vscode.ConfigurationTarget) {
-  return vscode.workspace.getConfiguration('clangd').update(key, value, target);
+  const val = vscode.workspace.getConfiguration(section).get<T>(name);
+  if (val === undefined) return undefined;
+  return await substitute(val);
 }
 
 // Traverse a JSON value, replacing placeholders in all strings.
@@ -50,15 +49,17 @@ async function replacement(name: string): Promise<string|undefined> {
   }
   if (name === 'workspaceRoot' || name === 'workspaceFolder' ||
       name === 'cwd') {
-    if (vscode.workspace.rootPath !== undefined)
-      return vscode.workspace.rootPath;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0)
+      return workspaceFolders[0].uri.fsPath;
     if (vscode.window.activeTextEditor !== undefined)
       return path.dirname(vscode.window.activeTextEditor.document.uri.fsPath);
     return process.cwd();
   }
-  if (name === 'workspaceFolderBasename' &&
-      vscode.workspace.rootPath !== undefined) {
-    return path.basename(vscode.workspace.rootPath);
+  if (name === 'workspaceFolderBasename') {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0)
+      return path.basename(workspaceFolders[0].uri.fsPath);
   }
   const envPrefix = 'env:';
   if (name.startsWith(envPrefix))
@@ -75,10 +76,7 @@ async function replacement(name: string): Promise<string|undefined> {
     try {
       return await vscode.commands.executeCommand(commandId);
     } catch (error) {
-      console.warn(`Clangd: Error resolving command '${commandId}':`, error);
-      vscode.window.showWarningMessage(
-          `Clangd: Failed to resolve ${commandId}`);
-
+      console.warn(`Error resolving command '${commandId}':`, error);
       return undefined;
     }
   }
