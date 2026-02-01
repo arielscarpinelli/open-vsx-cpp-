@@ -23,7 +23,7 @@
     ],
     "main": "./out/bundle",
     "scripts": {
-        "esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/bundle.js --external:vscode --format=cjs --platform=node",
+        "esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/bundle.js --external:vscode --external:tree-sitter --external:tree-sitter-cpp --format=cjs --platform=node",
         "vscode:prepublish": "npm run check-ts && npm run esbuild -- --minify --keep-names",
         "compile": "npm run esbuild -- --sourcemap",
         "check-ts": "tsc -noEmit -p ./",
@@ -31,7 +31,10 @@
         "test-compile": "tsc -p ./ && npm run compile",
         "test": "npm run test-compile && node ./out/test/index.js"
     },
-    "dependencies": {},
+    "dependencies": {
+        "tree-sitter": "^0.21.1",
+        "tree-sitter-cpp": "^0.23.4"
+    },
     "devDependencies": {
         "@types/glob": "^9.0.0",
         "@types/mocha": "^10.0.7",
@@ -51,6 +54,21 @@
         }
     },
     "contributes": {
+        "commands": [
+            {
+                "command": "cpp.switchSourceHeader",
+                "category": "C/C++",
+                "title": "Switch between Source/Header"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "cpp.switchSourceHeader",
+                "key": "Alt+o",
+                "mac": "Alt+cmd+o",
+                "when": "editorTextFocus"
+            }
+        ],
         "configuration": {
             "type": "object",
             "title": "GCC C/C++",
