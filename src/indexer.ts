@@ -74,12 +74,14 @@ export class WorkspaceIndexer {
         switch (node.type) {
             case 'class_specifier':
             case 'struct_specifier':
+            case 'enum_specifier':
             case 'namespace_definition': {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) {
                     const name = nameNode.text;
                     const kind = node.type === 'class_specifier' ? vscode.SymbolKind.Class :
                                  node.type === 'struct_specifier' ? vscode.SymbolKind.Struct :
+                                 node.type === 'enum_specifier' ? vscode.SymbolKind.Enum :
                                  vscode.SymbolKind.Namespace;
 
                     fileSymbols.push({
@@ -89,6 +91,21 @@ export class WorkspaceIndexer {
                         containerName
                     });
                     currentContainer = name;
+                }
+                break;
+            }
+            case 'type_definition': {
+                const declarator = node.childForFieldName('declarator');
+                if (declarator) {
+                    const nameNode = this.findIdentifier(declarator);
+                    if (nameNode) {
+                        fileSymbols.push({
+                            name: nameNode.text,
+                            kind: vscode.SymbolKind.Interface, // Interface is often used for typedefs in VS Code
+                            location: new vscode.Location(uri, new vscode.Position(nameNode.startPosition.row, nameNode.startPosition.column)),
+                            containerName
+                        });
+                    }
                 }
                 break;
             }

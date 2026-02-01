@@ -7,6 +7,8 @@ import { GccDefinitionProvider } from './definition-provider';
 import { GccCompletionProvider } from './completion-provider';
 import { switchSourceHeader } from './switch-source-header';
 import { GccFormatProvider } from './format-provider';
+import { GccReferencesProvider } from './references-provider';
+import { GccRenameProvider } from './rename-provider';
 
 export async function activate(context: vscode.ExtensionContext) {
     const outputChannel = vscode.window.createOutputChannel('C/C++ GCC');
@@ -41,6 +43,16 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register Completion Provider
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(selector, new GccCompletionProvider(indexer), '.', '->', ':')
+    );
+
+    // Register References Provider
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(selector, new GccReferencesProvider(indexer))
+    );
+
+    // Register Rename Provider
+    context.subscriptions.push(
+        vscode.languages.registerRenameProvider(selector, new GccRenameProvider(indexer))
     );
 
     // Register Formatting Provider
