@@ -1,9 +1,9 @@
 {
-    "name": "vscode-clangd",
-    "displayName": "Clangd (Refactored to GCC)",
-    "description": "C/C++ diagnostics using GCC and symbols using JS",
+    "name": "vscode-gcc",
+    "displayName": "GCC C/C++",
+    "description": "C/C++ diagnostics using GCC and symbols using GCC tree dumps",
     "version": "0.1.0",
-    "publisher": "llvm-vs-code-extensions",
+    "publisher": "custom-extensions",
     "license": "MIT",
     "engines": {
         "vscode": "^1.75.0"
@@ -23,7 +23,7 @@
     ],
     "main": "./out/bundle",
     "scripts": {
-        "esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/bundle.js --external:vscode --external:tree-sitter --external:tree-sitter-cpp --format=cjs --platform=node",
+        "esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/bundle.js --external:vscode --format=cjs --platform=node",
         "vscode:prepublish": "npm run check-ts && npm run esbuild -- --minify --keep-names",
         "compile": "npm run esbuild -- --sourcemap",
         "check-ts": "tsc -noEmit -p ./",
@@ -31,10 +31,7 @@
         "test-compile": "tsc -p ./ && npm run compile",
         "test": "npm run test-compile && node ./out/test/index.js"
     },
-    "dependencies": {
-        "tree-sitter": "^0.21.1",
-        "tree-sitter-cpp": "^0.23.4"
-    },
+    "dependencies": {},
     "devDependencies": {
         "@types/glob": "^9.0.0",
         "@types/mocha": "^10.0.7",
@@ -85,6 +82,11 @@
                         "type": "string"
                     },
                     "description": "Additional flags to pass to GCC."
+                },
+                "cpp.clangFormatPath": {
+                    "type": "string",
+                    "default": "clang-format",
+                    "description": "Path to the clang-format executable."
                 }
             }
         }

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { WorkspaceIndexer } from './indexer';
 
 export class GccReferencesProvider implements vscode.ReferenceProvider {
@@ -18,30 +19,45 @@ export class GccReferencesProvider implements vscode.ReferenceProvider {
         const word = document.getText(range);
         const locations: vscode.Location[] = [];
 
-        // Search in all indexed files
         const files = await vscode.workspace.findFiles('**/*.{c,cpp,h,hpp}');
+        const openDocs = vscode.workspace.textDocuments;
+
         for (const file of files) {
             if (token.isCancellationRequested) return null;
 
-            const doc = await vscode.workspace.openTextDocument(file);
-            const text = doc.getText();
+            let text: string;
+            const openDoc = openDocs.find(d => d.uri.toString() === file.toString());
+            if (openDoc) {
+                text = openDoc.getText();
+            } else {
+                text = fs.readFileSync(file.fsPath, 'utf8');
+            }
 
-            // Simple search for now, could be improved with tree-sitter for better accuracy
-            // to avoid matches in comments/strings
-            let index = text.indexOf(word);
-            while (index !== -1) {
-                const startPos = doc.positionAt(index);
-                const endPos = doc.positionAt(index + word.length);
-                const wordRange = doc.getWordRangeAtPosition(startPos);
+            const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\/\\*[\\s\\S]*?\\*\\/|\\/\\/.*|"(?:\\\\.|[^"])*"|'(?:\\\\.|[^'])*'|(\\b${escapedWord}\\b)`, 'g');
 
-                if (wordRange && doc.getText(wordRange) === word) {
-                    locations.push(new vscode.Location(file, wordRange));
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                if (match[1]) {
+                    const startPos = this.positionAt(text, match.index);
+                    const endPos = this.positionAt(text, match.index + word.length);
+                    locations.push(new vscode.Location(file, new vscode.Range(startPos, endPos)));
                 }
-
-                index = text.indexOf(word, index + word.length);
             }
         }
 
         return locations;
+    }
+
+    private positionAt(text: string, offset: number): vscode.Position {
+        let line = 0;
+        let lastNewLine = -1;
+        for (let i = 0; i < offset; i++) {
+            if (text[i] === '\n') {
+                line++;
+                lastNewLine = i;
+            }
+        }
+        return new vscode.Position(line, offset - lastNewLine - 1);
     }
 }

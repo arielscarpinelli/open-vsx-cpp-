@@ -1,21 +1,31 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
-import * as path from 'path';
+import { spawn } from 'child_process';
+import * as config from './config';
 
 export class GccFormatProvider implements vscode.DocumentFormattingEditProvider {
-    public provideDocumentFormattingEdits(
+    public async provideDocumentFormattingEdits(
         document: vscode.TextDocument,
         options: vscode.FormattingOptions,
         token: vscode.CancellationToken
-    ): vscode.ProviderResult<vscode.TextEdit[]> {
-        return new Promise((resolve, reject) => {
-            const filePath = document.uri.fsPath;
-            // Try to find clang-format in node_modules or path
-            const clangFormatPath = 'clang-format';
+    ): Promise<vscode.TextEdit[]> {
+        const clangFormatPath = await config.get<string>('clangFormatPath') || 'clang-format';
+        const args = ['-assume-filename=' + document.fileName];
 
-            const command = `${clangFormatPath} "${filePath}"`;
-            exec(command, (error, stdout, stderr) => {
-                if (error) {
+        return new Promise((resolve) => {
+            const child = spawn(clangFormatPath, args);
+            let stdout = '';
+            let stderr = '';
+
+            child.stdout.on('data', data => stdout += data);
+            child.stderr.on('data', data => stderr += data);
+
+            child.on('error', err => {
+                console.error('clang-format failed to start', err);
+                resolve([]);
+            });
+
+            child.on('close', code => {
+                if (code !== 0) {
                     console.error('clang-format failed', stderr);
                     resolve([]);
                     return;
@@ -25,6 +35,9 @@ export class GccFormatProvider implements vscode.DocumentFormattingEditProvider 
                 const fullRange = new vscode.Range(0, 0, lastLineId, document.lineAt(lastLineId).text.length);
                 resolve([vscode.TextEdit.replace(fullRange, stdout)]);
             });
+
+            child.stdin.write(document.getText());
+            child.stdin.end();
         });
     }
 }

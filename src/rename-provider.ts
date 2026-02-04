@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { WorkspaceIndexer } from './indexer';
 
 export class GccRenameProvider implements vscode.RenameProvider {
@@ -18,29 +19,46 @@ export class GccRenameProvider implements vscode.RenameProvider {
         const oldName = document.getText(range);
         const workspaceEdit = new vscode.WorkspaceEdit();
 
-        // Find all references and replace them
         const files = await vscode.workspace.findFiles('**/*.{c,cpp,h,hpp}');
+        const openDocs = vscode.workspace.textDocuments;
+
         for (const file of files) {
             if (token.isCancellationRequested) return null;
 
-            const doc = await vscode.workspace.openTextDocument(file);
-            const text = doc.getText();
+            let text: string;
+            const openDoc = openDocs.find(d => d.uri.toString() === file.toString());
+            if (openDoc) {
+                text = openDoc.getText();
+            } else {
+                text = fs.readFileSync(file.fsPath, 'utf8');
+            }
 
-            let index = text.indexOf(oldName);
-            while (index !== -1) {
-                const startPos = doc.positionAt(index);
-                const endPos = doc.positionAt(index + oldName.length);
-                const wordRange = doc.getWordRangeAtPosition(startPos);
+            const escapedOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\/\\*[\\s\\S]*?\\*\\/|\\/\\/.*|"(?:\\\\.|[^"])*"|'(?:\\\\.|[^'])*'|(\\b${escapedOldName}\\b)`, 'g');
 
-                if (wordRange && doc.getText(wordRange) === oldName) {
-                    workspaceEdit.replace(file, wordRange, newName);
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                if (match[1]) {
+                    const startPos = this.positionAt(text, match.index);
+                    const endPos = this.positionAt(text, match.index + oldName.length);
+                    workspaceEdit.replace(file, new vscode.Range(startPos, endPos), newName);
                 }
-
-                index = text.indexOf(oldName, index + oldName.length);
             }
         }
 
         return workspaceEdit;
+    }
+
+    private positionAt(text: string, offset: number): vscode.Position {
+        let line = 0;
+        let lastNewLine = -1;
+        for (let i = 0; i < offset; i++) {
+            if (text[i] === '\n') {
+                line++;
+                lastNewLine = i;
+            }
+        }
+        return new vscode.Position(line, offset - lastNewLine - 1);
     }
 
     public prepareRename?(
