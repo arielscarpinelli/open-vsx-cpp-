@@ -6,7 +6,6 @@ import { GccHoverProvider } from './hover-provider';
 import { GccDefinitionProvider } from './definition-provider';
 import { GccCompletionProvider } from './completion-provider';
 import { switchSourceHeader } from './switch-source-header';
-import { GccFormatProvider } from './format-provider';
 import { GccReferencesProvider } from './references-provider';
 import { GccRenameProvider } from './rename-provider';
 
@@ -55,11 +54,6 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerRenameProvider(selector, new GccRenameProvider(indexer))
     );
 
-    // Register Formatting Provider
-    context.subscriptions.push(
-        vscode.languages.registerDocumentFormattingEditProvider(selector, new GccFormatProvider())
-    );
-
     // Register Commands
     context.subscriptions.push(
         vscode.commands.registerCommand('cpp.switchSourceHeader', switchSourceHeader)
@@ -77,28 +71,28 @@ export async function activate(context: vscode.ExtensionContext) {
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.{c,cpp,h,hpp}');
     watcher.onDidCreate(uri => indexer.indexFile(uri));
     watcher.onDidChange(uri => indexer.indexFile(uri));
-    watcher.onDidDelete(uri => indexer.indexFile(uri)); // Indexer should handle deletion
+    watcher.onDidDelete(uri => indexer.removeFile(uri));
     context.subscriptions.push(watcher);
 
     // Diagnostics triggers
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((event) => {
             gccDiagnostics.updateDiagnostics(event.document, true);
-            indexer.indexFile(event.document.uri);
+            indexer.indexFile(event.document.uri, event.document.getText());
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
             gccDiagnostics.updateDiagnostics(document, false);
-            indexer.indexFile(document.uri);
+            indexer.indexFile(document.uri, document.getText());
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
             gccDiagnostics.updateDiagnostics(document, false);
-            indexer.indexFile(document.uri);
+            indexer.indexFile(document.uri, document.getText());
         })
     );
 
@@ -111,6 +105,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Update diagnostics for all open documents on activation
     vscode.workspace.textDocuments.forEach((document) => {
         gccDiagnostics.updateDiagnostics(document, false);
+        indexer.indexFile(document.uri, document.getText());
     });
 
     console.log('C/C++ GCC extension is now active!');

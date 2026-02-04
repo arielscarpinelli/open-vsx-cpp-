@@ -20,8 +20,9 @@ interface GccNode {
 }
 
 export class WorkspaceIndexer {
-    private symbols: Map<string, SymbolInfo[]> = new Map();
-    private queue: vscode.Uri[] = [];
+    // Maps a file URI to the list of symbols it contains
+    private fileSymbols: Map<string, SymbolInfo[]> = new Map();
+    private queue: { uri: vscode.Uri, content?: string }[] = [];
     private running = 0;
     private readonly MAX_CONCURRENT = Math.max(1, os.cpus().length - 1);
 
@@ -34,16 +35,18 @@ export class WorkspaceIndexer {
         }
     }
 
-    public indexFile(uri: vscode.Uri): void {
-        this.enqueue(uri);
+    public indexFile(uri: vscode.Uri, content?: string): void {
+        this.enqueue(uri, content);
     }
 
-    private enqueue(uri: vscode.Uri): void {
-        // Avoid duplicate in queue
-        if (this.queue.some(u => u.toString() === uri.toString())) {
+    private enqueue(uri: vscode.Uri, content?: string): void {
+        // Avoid duplicate in queue, but update content if provided
+        const index = this.queue.findIndex(u => u.uri.toString() === uri.toString());
+        if (index !== -1) {
+            this.queue[index].content = content;
             return;
         }
-        this.queue.push(uri);
+        this.queue.push({ uri, content });
         this.processQueue();
     }
 
@@ -52,20 +55,20 @@ export class WorkspaceIndexer {
             return;
         }
 
-        const uri = this.queue.shift()!;
+        const task = this.queue.shift()!;
         this.running++;
 
         try {
-            await this.doIndexFile(uri);
+            await this.doIndexFile(task.uri, task.content);
         } finally {
             this.running--;
             this.processQueue();
         }
     }
 
-    private async doIndexFile(uri: vscode.Uri): Promise<void> {
+    private async doIndexFile(uri: vscode.Uri, content?: string): Promise<void> {
         try {
-            if (!(await this.fileExists(uri))) {
+            if (!content && !(await this.fileExists(uri))) {
                 this.removeFile(uri);
                 return;
             }
@@ -81,16 +84,35 @@ export class WorkspaceIndexer {
             const tmpDumpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gcc-dump-'));
             const dumpPrefix = path.join(tmpDumpDir, 'dump.');
 
-            const args = [
-                '-c', uri.fsPath,
-                '-o', path.join(tmpDumpDir, 'output.o'),
-                dumpFlag,
-                `-dumpdir`, dumpPrefix,
-                ...gccFlags
-            ];
+            let args: string[];
+            if (content) {
+                const lang = isCpp ? 'c++' : 'c';
+                args = [
+                    '-x', lang,
+                    '-c', '-',
+                    '-o', path.join(tmpDumpDir, 'output.o'),
+                    dumpFlag,
+                    `-dumpdir`, dumpPrefix,
+                    ...gccFlags
+                ];
+            } else {
+                args = [
+                    '-c', uri.fsPath,
+                    '-o', path.join(tmpDumpDir, 'output.o'),
+                    dumpFlag,
+                    `-dumpdir`, dumpPrefix,
+                    ...gccFlags
+                ];
+            }
 
             return new Promise((resolve) => {
                 const child = spawn(gccPath, args, { cwd: cwd });
+
+                child.on('error', (err) => {
+                    console.error('Failed to start GCC for indexing', err);
+                    resolve();
+                });
+
                 child.on('close', (code) => {
                     try {
                         const files = fs.readdirSync(tmpDumpDir);
@@ -98,16 +120,11 @@ export class WorkspaceIndexer {
 
                         if (dumpFile) {
                             const dumpPath = path.join(tmpDumpDir, dumpFile);
-                            const content = fs.readFileSync(dumpPath, 'utf8');
-                            const nodes = this.parseGccDump(content);
-                            const fileSymbols = this.extractSymbolsFromNodes(nodes, uri);
+                            const dumpContent = fs.readFileSync(dumpPath, 'utf8');
+                            const nodes = this.parseGccDump(dumpContent);
+                            const symbols = this.extractSymbolsFromNodes(nodes, uri);
 
-                            this.removeFile(uri);
-                            for (const sym of fileSymbols) {
-                                const existing = this.symbols.get(sym.name) || [];
-                                existing.push(sym);
-                                this.symbols.set(sym.name, existing);
-                            }
+                            this.fileSymbols.set(uri.toString(), symbols);
                         }
                     } catch (e) {
                         console.error('Error parsing GCC dump', e);
@@ -118,6 +135,11 @@ export class WorkspaceIndexer {
                         resolve();
                     }
                 });
+
+                if (content) {
+                    child.stdin.write(content);
+                    child.stdin.end();
+                }
             });
 
         } catch (e) {
@@ -167,7 +189,8 @@ export class WorkspaceIndexer {
                     const nameNode = nodes.get(nameId.substring(1));
                     const name = nameNode?.fields.get('strg') || nameNode?.fields.get('name') || '';
 
-                    if (name && srcp.includes(fileName)) {
+                    // Note: when using stdin, fileName might be <stdin>
+                    if (name && (srcp.includes(fileName) || srcp.includes('<stdin>'))) {
                         const parts = srcp.split(':');
                         let line = parseInt(parts[parts.length - 1]);
                         if (parts.length >= 3) {
@@ -200,15 +223,7 @@ export class WorkspaceIndexer {
     }
 
     public removeFile(uri: vscode.Uri): void {
-        const uriString = uri.toString();
-        for (const [name, syms] of this.symbols.entries()) {
-            const filtered = syms.filter(s => s.location.uri.toString() !== uriString);
-            if (filtered.length === 0) {
-                this.symbols.delete(name);
-            } else {
-                this.symbols.set(name, filtered);
-            }
-        }
+        this.fileSymbols.delete(uri.toString());
     }
 
     private async fileExists(uri: vscode.Uri): Promise<boolean> {
@@ -221,13 +236,21 @@ export class WorkspaceIndexer {
     }
 
     public findSymbols(name: string): SymbolInfo[] {
-        return this.symbols.get(name) || [];
+        const found: SymbolInfo[] = [];
+        for (const symbols of this.fileSymbols.values()) {
+            for (const sym of symbols) {
+                if (sym.name === name) {
+                    found.push(sym);
+                }
+            }
+        }
+        return found;
     }
 
     public getAllSymbols(): SymbolInfo[] {
         const all: SymbolInfo[] = [];
-        for (const syms of this.symbols.values()) {
-            all.push(...syms);
+        for (const symbols of this.fileSymbols.values()) {
+            all.push(...symbols);
         }
         return all;
     }

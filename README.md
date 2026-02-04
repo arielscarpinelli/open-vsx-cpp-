@@ -8,7 +8,6 @@ This extension provides C/C++ language support using GCC as a backend. It has be
 - **IntelliSense**: Symbol indexing powered by GCC's raw tree dumps (`-fdump-tree-original-raw` or `-fdump-lang-raw`). This ensures support for GCC-specific syntax quirks.
 - **Navigation**: "Go to Definition" and "Find All References" (regex-based with comment/string awareness).
 - **Refactoring**: Workspace-wide "Rename" support.
-- **Formatting**: Document formatting via `clang-format`.
 - **Utilities**: "Switch between Source/Header" command.
 
 ## Limitations
@@ -25,4 +24,3 @@ Since this extension replaces the full `clangd` language server with a lightweig
 ## Requirements
 
 - GCC must be installed and available on your PATH.
-- `clang-format` must be installed for formatting support.
