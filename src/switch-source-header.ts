@@ -1,34 +1,41 @@
 import * as vscode from 'vscode';
-import * as vscodelc from 'vscode-languageclient/node';
+import * as path from 'path';
+import * as fs from 'fs';
 
-import {ClangdContext} from './clangd-context';
+export async function switchSourceHeader() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
 
-export function activate(context: ClangdContext) {
-  context.subscriptions.push(vscode.commands.registerCommand(
-      'clangd.switchheadersource', () => switchSourceHeader(context.client)));
-}
+    const uri = editor.document.uri;
+    const ext = path.extname(uri.fsPath).toLowerCase();
+    const basename = path.basename(uri.fsPath, ext);
+    const dir = path.dirname(uri.fsPath);
 
-namespace SwitchSourceHeaderRequest {
-export const type =
-    new vscodelc
-        .RequestType<vscodelc.TextDocumentIdentifier, string|undefined, void>(
-            'textDocument/switchSourceHeader');
-}
+    let targetExts: string[] = [];
+    if (['.cpp', '.c', '.cc', '.cxx'].includes(ext)) {
+        targetExts = ['.h', '.hpp', '.hh', '.hxx'];
+    } else if (['.h', '.hpp', '.hh', '.hxx'].includes(ext)) {
+        targetExts = ['.cpp', '.c', '.cc', '.cxx'];
+    }
 
-async function switchSourceHeader(client: vscodelc.LanguageClient):
-    Promise<void> {
-  if (!vscode.window.activeTextEditor)
-    return;
-  const uri = vscode.Uri.file(vscode.window.activeTextEditor.document.fileName);
+    for (const targetExt of targetExts) {
+        const targetPath = path.join(dir, basename + targetExt);
+        if (fs.existsSync(targetPath)) {
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
+            await vscode.window.showTextDocument(doc);
+            return;
+        }
+    }
 
-  const docIdentifier = vscodelc.TextDocumentIdentifier.create(uri.toString());
-  const sourceUri =
-      await client.sendRequest(SwitchSourceHeaderRequest.type, docIdentifier);
-  if (!sourceUri) {
-    vscode.window.showInformationMessage('Didn\'t find a corresponding file.');
-    return;
-  }
-  const doc =
-      await vscode.workspace.openTextDocument(vscode.Uri.parse(sourceUri));
-  vscode.window.showTextDocument(doc);
+    // If not in the same directory, try searching the workspace
+    for (const targetExt of targetExts) {
+        const files = await vscode.workspace.findFiles(`**/${basename}${targetExt}`, undefined, 1);
+        if (files.length > 0) {
+            const doc = await vscode.workspace.openTextDocument(files[0]);
+            await vscode.window.showTextDocument(doc);
+            return;
+        }
+    }
+
+    vscode.window.showInformationMessage('Corresponding file not found.');
 }

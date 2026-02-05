@@ -1,121 +1,114 @@
 import * as vscode from 'vscode';
+import { GccDiagnostics } from './gcc-diagnostics';
+import { JSProjectSymbolProvider } from './symbol-provider';
+import { WorkspaceIndexer } from './indexer';
+import { GccHoverProvider } from './hover-provider';
+import { GccDefinitionProvider } from './definition-provider';
+import { GccCompletionProvider } from './completion-provider';
+import { switchSourceHeader } from './switch-source-header';
+import { GccReferencesProvider } from './references-provider';
+import { GccRenameProvider } from './rename-provider';
 
-import {ClangdExtension} from '../api/vscode-clangd';
+export async function activate(context: vscode.ExtensionContext) {
+    const outputChannel = vscode.window.createOutputChannel('C/C++ GCC');
+    context.subscriptions.push(outputChannel);
 
-import {ClangdExtensionImpl} from './api';
-import {ClangdContext} from './clangd-context';
-import {get, update} from './config';
+    const gccDiagnostics = new GccDiagnostics();
+    context.subscriptions.push(gccDiagnostics);
 
-let apiInstance: ClangdExtensionImpl|undefined;
+    const indexer = new WorkspaceIndexer();
+    const symbolProvider = new JSProjectSymbolProvider(indexer);
 
-/**
- *  This method is called when the extension is activated. The extension is
- *  activated the very first time a command is executed.
- */
-export async function activate(context: vscode.ExtensionContext):
-    Promise<ClangdExtension> {
-  const outputChannel = vscode.window.createOutputChannel('clangd');
-  context.subscriptions.push(outputChannel);
+    // Register Document Symbol Provider
+    const selector = [
+        { scheme: 'file', language: 'c' },
+        { scheme: 'file', language: 'cpp' }
+    ];
 
-  let clangdContext: ClangdContext|null = null;
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSymbolProvider(selector, symbolProvider)
+    );
 
-  context.subscriptions.push(
-      vscode.commands.registerCommand('clangd.activate', async () => {
-        if (clangdContext && (clangdContext.clientIsStarting() ||
-                              clangdContext.clientIsRunning())) {
-          return;
-        }
-        vscode.commands.executeCommand('clangd.restart');
-      }));
-  context.subscriptions.push(
-      vscode.commands.registerCommand('clangd.restart', async () => {
-        if (!get<boolean>('enable')) {
-          vscode.window
-              .showInformationMessage(
-                  'Language features from Clangd are currently disabled. Would you like to enable them?',
-                  'Enable', 'Close')
-              .then(async (choice) => {
-                if (choice === 'Enable') {
-                  await update<boolean>('enable', true);
-                  vscode.commands.executeCommand('clangd.restart');
-                }
-              });
-          return;
-        }
+    // Register Hover Provider
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider(selector, new GccHoverProvider(indexer))
+    );
 
-        // clangd.restart can be called when the extension is not yet activated.
-        // In such a case, vscode will activate the extension and then run this
-        // handler. Detect this situation and bail out (doing an extra
-        // stop/start cycle in this situation is pointless, and doesn't work
-        // anyways because the client can't be stop()-ped when it's still in the
-        // Starting state).
-        if (clangdContext && clangdContext.clientIsStarting()) {
-          return;
-        }
-        if (clangdContext)
-          clangdContext.dispose();
-        clangdContext = await ClangdContext.create(context.globalStoragePath,
-                                                   outputChannel);
-        if (clangdContext)
-          context.subscriptions.push(clangdContext);
-        if (apiInstance) {
-          apiInstance.client = clangdContext?.client;
-        }
-      }));
-  context.subscriptions.push(
-      vscode.commands.registerCommand('clangd.shutdown', async () => {
-        if (clangdContext && clangdContext.clientIsStarting()) {
-          return;
-        }
-        if (clangdContext)
-          clangdContext.dispose();
-      }));
+    // Register Definition Provider
+    context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider(selector, new GccDefinitionProvider(indexer))
+    );
 
-  let shouldCheck = false;
+    // Register Completion Provider
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(selector, new GccCompletionProvider(indexer), '.', '->', ':')
+    );
 
-  if (vscode.workspace.getConfiguration('clangd').get<boolean>('enable')) {
-    clangdContext =
-        await ClangdContext.create(context.globalStoragePath, outputChannel);
-    if (clangdContext)
-      context.subscriptions.push(clangdContext);
+    // Register References Provider
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(selector, new GccReferencesProvider(indexer))
+    );
 
-    shouldCheck = vscode.workspace.getConfiguration('clangd').get<boolean>(
-                      'detectExtensionConflicts') ??
-                  false;
-  }
+    // Register Rename Provider
+    context.subscriptions.push(
+        vscode.languages.registerRenameProvider(selector, new GccRenameProvider(indexer))
+    );
 
-  if (shouldCheck) {
-    const interval = setInterval(function() {
-      const cppTools = vscode.extensions.getExtension('ms-vscode.cpptools');
-      if (cppTools && cppTools.isActive) {
-        const cppToolsConfiguration =
-            vscode.workspace.getConfiguration('C_Cpp');
-        const cppToolsEnabled =
-            cppToolsConfiguration.get<string>('intelliSenseEngine');
-        if (cppToolsEnabled?.toLowerCase() !== 'disabled') {
-          vscode.window
-              .showWarningMessage(
-                  'You have both the Microsoft C++ (cpptools) extension and ' +
-                      'clangd extension enabled. The Microsoft IntelliSense features ' +
-                      'conflict with clangd\'s code completion, diagnostics etc.',
-                  'Disable IntelliSense', 'Never show this warning')
-              .then(selection => {
-                if (selection == 'Disable IntelliSense') {
-                  cppToolsConfiguration.update(
-                      'intelliSenseEngine', 'disabled',
-                      vscode.ConfigurationTarget.Global);
-                } else if (selection == 'Never show this warning') {
-                  vscode.workspace.getConfiguration('clangd').update(
-                      'detectExtensionConflicts', false,
-                      vscode.ConfigurationTarget.Global);
-                  clearInterval(interval);
-                }
-              });
-        }
-      }
-    }, 5000);
-  }
+    // Register Commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cpp.switchSourceHeader', switchSourceHeader)
+    );
 
-  apiInstance = new ClangdExtensionImpl(clangdContext?.client);
-  return apiInstance;
+    // Index workspace on startup
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Window,
+        title: "Indexing C/C++ workspace..."
+    }, async () => {
+        await indexer.indexWorkspace();
+    });
+
+    // File system watcher for indexing
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{c,cpp,h,hpp}');
+    watcher.onDidCreate(uri => indexer.indexFile(uri));
+    watcher.onDidChange(uri => indexer.indexFile(uri));
+    watcher.onDidDelete(uri => indexer.removeFile(uri));
+    context.subscriptions.push(watcher);
+
+    // Diagnostics triggers
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument((event) => {
+            gccDiagnostics.updateDiagnostics(event.document, true);
+            indexer.indexFile(event.document.uri, event.document.getText());
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            gccDiagnostics.updateDiagnostics(document, false);
+            indexer.indexFile(document.uri, document.getText());
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+            gccDiagnostics.updateDiagnostics(document, false);
+            indexer.indexFile(document.uri, document.getText());
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            gccDiagnostics.clearDiagnostics(document);
+        })
+    );
+
+    // Update diagnostics for all open documents on activation
+    vscode.workspace.textDocuments.forEach((document) => {
+        gccDiagnostics.updateDiagnostics(document, false);
+        indexer.indexFile(document.uri, document.getText());
+    });
+
+    console.log('C/C++ GCC extension is now active!');
 }
+
+export function deactivate() {}
